@@ -19,9 +19,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 
 META_FILE = DATA_DIR / "drug_meta.parquet"
-TTEST_FILE = DATA_DIR / "df_ttest_all.parquet"
 HALLMARK_FILE = DATA_DIR / "df_hallmark_all.parquet"
 GO_FILE = DATA_DIR / "df_go_bp_all.parquet"
+TTEST_PREFIX = "df_ttest_all"
 
 
 # =========================
@@ -39,9 +39,37 @@ def load_parquet(file_path_str: str):
 
 
 @st.cache_data
-def load_all_data(meta_path: str, ttest_path: str, hallmark_path: str, go_path: str):
+def load_parquet_parts(data_dir_str: str, prefix: str):
+    """
+    Load all parquet files with names like:
+      prefix_part1.parquet
+      prefix_part2.parquet
+      ...
+    and concatenate them into one dataframe.
+    """
+    data_dir = Path(data_dir_str)
+    files = sorted(data_dir.glob(f"{prefix}_part*.parquet"))
+
+    if not files:
+        return pd.DataFrame()
+
+    dfs = []
+    for f in files:
+        try:
+            dfs.append(pd.read_parquet(f))
+        except Exception:
+            continue
+
+    if not dfs:
+        return pd.DataFrame()
+
+    return pd.concat(dfs, ignore_index=True)
+
+
+@st.cache_data
+def load_all_data(meta_path: str, data_dir_str: str, ttest_prefix: str, hallmark_path: str, go_path: str):
     meta_df = load_parquet(meta_path)
-    ttest_df = load_parquet(ttest_path)
+    ttest_df = load_parquet_parts(data_dir_str, ttest_prefix)
     hallmark_df = load_parquet(hallmark_path)
     go_df = load_parquet(go_path)
     return meta_df, ttest_df, hallmark_df, go_df
@@ -246,7 +274,11 @@ st.write("Interactive companion portal for browsing drug-level proteomic perturb
 # Load data
 # =========================
 meta_df, ttest_all, hallmark_all, go_all = load_all_data(
-    str(META_FILE), str(TTEST_FILE), str(HALLMARK_FILE), str(GO_FILE)
+    str(META_FILE),
+    str(DATA_DIR),
+    TTEST_PREFIX,
+    str(HALLMARK_FILE),
+    str(GO_FILE)
 )
 
 if meta_df.empty:
@@ -277,7 +309,9 @@ if len(filtered_drugs) == 0:
 
 selected_drug = st.sidebar.selectbox("Select a drug", filtered_drugs)
 
-# current drug data
+# =========================
+# Current drug data
+# =========================
 meta_sub = meta_df.loc[meta_df["drug"].astype(str) == str(selected_drug)].copy()
 meta_row = meta_sub.iloc[0] if not meta_sub.empty else pd.Series(dtype=object)
 
@@ -285,7 +319,7 @@ ttest_df = subset_one_drug(ttest_all, selected_drug)
 hallmark_df = subset_one_drug(hallmark_all, selected_drug)
 go_df = subset_one_drug(go_all, selected_drug)
 
-# diff_df 保持兼容
+# keep compatibility with old page naming
 diff_df = ttest_df.copy()
 
 # =========================
@@ -558,4 +592,9 @@ with tab5:
 # Footer
 # =========================
 st.divider()
-st.caption(f"Current data files: {META_FILE.name}, {TTEST_FILE.name}, {HALLMARK_FILE.name}, {GO_FILE.name}")
+ttest_part_files = sorted(DATA_DIR.glob(f"{TTEST_PREFIX}_part*.parquet"))
+ttest_part_names = ", ".join([p.name for p in ttest_part_files]) if ttest_part_files else "None"
+st.caption(
+    f"Current data files: {META_FILE.name}, {HALLMARK_FILE.name}, {GO_FILE.name} | "
+    f"TTEST parts: {ttest_part_names}"
+)

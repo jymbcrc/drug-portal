@@ -1,4 +1,3 @@
-
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -16,33 +15,37 @@ st.set_page_config(
 # =========================
 # Paths
 # =========================
-# Put this file under: pages/1_Protein_across_drugs.py
-# Default expected data file: data/df_ttest_all.parquet
 BASE_DIR = Path(__file__).resolve().parent.parent
-DEFAULT_DATA_FILE = BASE_DIR / "data" / "df_ttest_all.parquet"
+DATA_DIR = BASE_DIR / "data"
+DEFAULT_TTEST_PREFIX = "df_ttest_all"
 
 # =========================
 # Helpers
 # =========================
 @st.cache_data
-def load_ttest_data(file_path_str: str):
-    file_path = Path(file_path_str)
-    if not file_path.exists():
+def load_parquet_parts(data_dir_str: str, prefix: str):
+    """
+    Load all parquet parts matching:
+      {prefix}_part*.parquet
+    and concatenate them.
+    """
+    data_dir = Path(data_dir_str)
+    files = sorted(data_dir.glob(f"{prefix}_part*.parquet"))
+
+    if not files:
         return pd.DataFrame()
 
-    try:
-        if file_path.suffix.lower() == ".csv":
-            return pd.read_csv(file_path)
-        elif file_path.suffix.lower() == ".tsv":
-            return pd.read_csv(file_path, sep="\t")
-        elif file_path.suffix.lower() == ".parquet":
-            return pd.read_parquet(file_path)
-        elif file_path.suffix.lower() in [".pkl", ".pickle"]:
-            return pd.read_pickle(file_path)
-        else:
-            return pd.read_csv(file_path)
-    except Exception:
+    dfs = []
+    for f in files:
+        try:
+            dfs.append(pd.read_parquet(f))
+        except Exception:
+            pass
+
+    if not dfs:
         return pd.DataFrame()
+
+    return pd.concat(dfs, ignore_index=True)
 
 
 def prepare_ttest_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -51,17 +54,14 @@ def prepare_ttest_df(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
 
-    # Make sure key columns are present in a flexible way
     required = ["drug", "protein", "log2FC", "p_value", "p_value_adj"]
     missing = [c for c in required if c not in out.columns]
     if missing:
         return pd.DataFrame()
 
-    # Standardize gene symbol if absent
     if "gene_symbol" not in out.columns:
         out["gene_symbol"] = ""
 
-    # Convert to numeric where appropriate
     for c in ["log2FC", "p_value", "p_value_adj", "t_stat", "mean_drug", "mean_DMSO"]:
         if c in out.columns:
             out[c] = pd.to_numeric(out[c], errors="coerce")
@@ -133,7 +133,6 @@ def filter_rows(
         return sub
 
     out = sub.copy()
-
     out = out.loc[out["log2FC"].notna()].copy()
 
     if max_fdr is not None:
@@ -177,13 +176,10 @@ def apply_top_n(sub: pd.DataFrame, top_n_mode: str, top_n: int) -> pd.DataFrame:
 
     if top_n_mode == "Show all":
         return out
-
     if top_n_mode == "Top N by |log2FC|":
         return out.reindex(out["log2FC"].abs().sort_values(ascending=False).index).head(top_n)
-
     if top_n_mode == "Top N upregulated":
         return out.sort_values("log2FC", ascending=False).head(top_n)
-
     if top_n_mode == "Top N downregulated":
         return out.sort_values("log2FC", ascending=True).head(top_n)
 
@@ -214,13 +210,10 @@ def make_dot_plot(
 
     if "p_value" in plot_df.columns:
         hover_text += "<br>P-value: " + plot_df["p_value"].apply(lambda x: f"{x:.2e}" if pd.notna(x) else "NA")
-
     if "t_stat" in plot_df.columns:
         hover_text += "<br>t-stat: " + plot_df["t_stat"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "NA")
-
     if "mean_drug" in plot_df.columns:
         hover_text += "<br>mean_drug: " + plot_df["mean_drug"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "NA")
-
     if "mean_DMSO" in plot_df.columns:
         hover_text += "<br>mean_DMSO: " + plot_df["mean_DMSO"].apply(lambda x: f"{x:.3f}" if pd.notna(x) else "NA")
 
@@ -239,20 +232,13 @@ def make_dot_plot(
             text=group_df["gene_symbol"].replace("", np.nan).fillna(group_df["protein"]),
             hovertext=hover_text.loc[group_df.index],
             hoverinfo="text",
-            marker=dict(
-                size=9,
-                color=group_df["dot_color"],
-                opacity=0.85
-            )
+            marker=dict(size=9, color=group_df["dot_color"], opacity=0.85)
         ))
 
     fig.add_hline(y=0, line_dash="dash", line_width=1)
 
     fig.update_layout(
-        title=dict(
-            text=f"Protein across drugs: {query}",
-            font=dict(size=title_font_size)
-        ),
+        title=dict(text=f"Protein across drugs: {query}", font=dict(size=title_font_size)),
         xaxis_title="Drug",
         yaxis_title="log2 Fold Change",
         template="simple_white",
@@ -280,19 +266,23 @@ st.write("Browse how one protein or gene changes across all drugs.")
 
 with st.sidebar:
     st.header("Protein view settings")
-    data_file_input = st.text_input(
-        "Data file path",
-        value=str(DEFAULT_DATA_FILE)
+    data_dir_input = st.text_input(
+        "Data directory",
+        value=str(DATA_DIR)
+    )
+    ttest_prefix = st.text_input(
+        "T-test file prefix",
+        value=DEFAULT_TTEST_PREFIX
     )
 
-df_ttest = load_ttest_data(data_file_input)
+df_ttest = load_parquet_parts(data_dir_input, ttest_prefix)
 df_ttest = prepare_ttest_df(df_ttest)
 
 if df_ttest.empty:
     st.error(
-        "Cannot load a valid t-test table. "
-        "Please check the file path and make sure it contains these columns: "
-        "drug, protein, log2FC, p_value, p_value_adj"
+        "Cannot load a valid split t-test table. "
+        "Please check the folder path and file names like "
+        "'df_ttest_all_part1.parquet', 'df_ttest_all_part2.parquet', etc."
     )
     st.stop()
 
@@ -312,7 +302,7 @@ with query_col2:
 sub = find_matching_rows(df_ttest, query, search_mode)
 
 if sub.empty:
-    st.warning("No matching protein or gene was found in the loaded df_ttest file.")
+    st.warning("No matching protein or gene was found in the loaded df_ttest files.")
     st.stop()
 
 controls1, controls2, controls3, controls4 = st.columns(4)
