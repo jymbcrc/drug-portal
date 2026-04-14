@@ -1,5 +1,4 @@
 from pathlib import Path
-import json
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -17,45 +16,48 @@ st.set_page_config(
 # Paths
 # =========================
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data" / "drugs"
+DATA_DIR = BASE_DIR / "data"
+
+META_FILE = DATA_DIR / "drug_meta.parquet"
+TTEST_FILE = DATA_DIR / "df_ttest_all.parquet"
+HALLMARK_FILE = DATA_DIR / "df_hallmark_all.parquet"
+GO_FILE = DATA_DIR / "df_go_bp_all.parquet"
+
 
 # =========================
 # Helpers
 # =========================
 @st.cache_data
-def get_drug_list(data_dir: Path):
-    if not data_dir.exists():
-        return []
-    return sorted([p.name for p in data_dir.iterdir() if p.is_dir()])
-
-
-@st.cache_data
-def load_summary_json(drug_dir_str: str):
-    drug_dir = Path(drug_dir_str)
-    file = drug_dir / "summary.json"
-    if not file.exists():
-        return {}
-    with open(file, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-@st.cache_data
-def load_csv(file_path_str: str):
+def load_parquet(file_path_str: str):
     file_path = Path(file_path_str)
     if not file_path.exists():
         return pd.DataFrame()
     try:
-        return pd.read_csv(file_path)
+        return pd.read_parquet(file_path)
     except Exception:
         return pd.DataFrame()
 
 
 @st.cache_data
-def load_markdown(file_path_str: str):
-    file_path = Path(file_path_str)
-    if not file_path.exists():
-        return ""
-    return file_path.read_text(encoding="utf-8")
+def load_all_data(meta_path: str, ttest_path: str, hallmark_path: str, go_path: str):
+    meta_df = load_parquet(meta_path)
+    ttest_df = load_parquet(ttest_path)
+    hallmark_df = load_parquet(hallmark_path)
+    go_df = load_parquet(go_path)
+    return meta_df, ttest_df, hallmark_df, go_df
+
+
+def get_drug_list(meta_df: pd.DataFrame):
+    if meta_df.empty or "drug" not in meta_df.columns:
+        return []
+    return sorted(meta_df["drug"].dropna().astype(str).unique().tolist())
+
+
+def subset_one_drug(df: pd.DataFrame, drug_name: str) -> pd.DataFrame:
+    if df.empty or "drug" not in df.columns:
+        return pd.DataFrame()
+    sub = df.loc[df["drug"].astype(str) == str(drug_name)].copy()
+    return sub.reset_index(drop=True)
 
 
 def show_metric_with_caption(label, value, caption):
@@ -220,7 +222,7 @@ def plot_volcano_interactive(
         xaxis=dict(
             title_font=dict(size=18),
             tickfont=dict(size=18)
-        ),  
+        ),
         yaxis=dict(
             title_font=dict(size=18),
             tickfont=dict(size=18)
@@ -241,16 +243,20 @@ st.title("Drug Proteomics Portal")
 st.write("Interactive companion portal for browsing drug-level proteomic perturbation results.")
 
 # =========================
-# Check data dir
+# Load data
 # =========================
-if not DATA_DIR.exists():
-    st.error(f"Cannot find data directory: {DATA_DIR}")
+meta_df, ttest_all, hallmark_all, go_all = load_all_data(
+    str(META_FILE), str(TTEST_FILE), str(HALLMARK_FILE), str(GO_FILE)
+)
+
+if meta_df.empty:
+    st.error(f"Cannot load meta file: {META_FILE}")
     st.stop()
 
-drug_list = get_drug_list(DATA_DIR)
+drug_list = get_drug_list(meta_df)
 
 if len(drug_list) == 0:
-    st.warning("No drug folders were found under data/drugs/")
+    st.warning("No drugs were found in drug_meta.parquet")
     st.stop()
 
 # =========================
@@ -271,22 +277,24 @@ if len(filtered_drugs) == 0:
 
 selected_drug = st.sidebar.selectbox("Select a drug", filtered_drugs)
 
-drug_dir = DATA_DIR / selected_drug
+# current drug data
+meta_sub = meta_df.loc[meta_df["drug"].astype(str) == str(selected_drug)].copy()
+meta_row = meta_sub.iloc[0] if not meta_sub.empty else pd.Series(dtype=object)
 
-summary = load_summary_json(str(drug_dir))
-diff_df = load_csv(str(drug_dir / "diff_proteins.csv"))
-hallmark_df = load_csv(str(drug_dir / "hallmark.csv"))
-go_df = load_csv(str(drug_dir / "go_bp.csv"))
-ttest_df = load_csv(str(drug_dir / "ttest.csv"))
-ai_summary_md = load_markdown(str(drug_dir / "ai_summary.md"))
+ttest_df = subset_one_drug(ttest_all, selected_drug)
+hallmark_df = subset_one_drug(hallmark_all, selected_drug)
+go_df = subset_one_drug(go_all, selected_drug)
+
+# diff_df 保持兼容
+diff_df = ttest_df.copy()
 
 # =========================
 # Header
 # =========================
-drug_name = summary.get("drug_name", selected_drug)
-target = summary.get("target", "NA")
-pathway = summary.get("pathway", "NA")
-research_area = summary.get("research_area", "NA")
+drug_name = meta_row.get("drug", selected_drug)
+target = meta_row.get("target", "NA")
+pathway = meta_row.get("pathway", "NA")
+research_area = meta_row.get("research_area", "NA")
 
 st.header(drug_name)
 
@@ -305,47 +313,47 @@ st.subheader("Summary")
 
 m1, m2, m3 = st.columns(3)
 
-protein_criteria = summary.get("n_sig_proteins_criteria", {})
-go_criteria = summary.get("n_sig_go_bp_criteria", {})
-hallmark_criteria = summary.get("n_sig_hallmark_criteria", {})
-
 protein_caption = []
-if "FDR" in protein_criteria:
-    protein_caption.append(f"FDR {protein_criteria['FDR']}")
-if "log2FC" in protein_criteria and protein_criteria["log2FC"] != "None":
-    protein_caption.append(f"|log2FC| {protein_criteria['log2FC']}")
+protein_fdr = meta_row.get("protein_fdr", None)
+protein_log2fc = meta_row.get("protein_log2fc", None)
+if pd.notna(protein_fdr):
+    protein_caption.append(f"FDR < {protein_fdr}")
+if pd.notna(protein_log2fc):
+    protein_caption.append(f"|log2FC| > {protein_log2fc}")
 protein_caption = ", ".join(protein_caption)
 
 go_caption = []
-if "FDR" in go_criteria:
-    go_caption.append(f"FDR {go_criteria['FDR']}")
+go_fdr = meta_row.get("go_fdr", None)
+if pd.notna(go_fdr):
+    go_caption.append(f"FDR < {go_fdr}")
 go_caption = ", ".join(go_caption)
 
 hallmark_caption = []
-if "FDR" in hallmark_criteria and hallmark_criteria["FDR"] != "None":
-    hallmark_caption.append(f"FDR {hallmark_criteria['FDR']}")
-elif "FDR" in hallmark_criteria and hallmark_criteria["FDR"] == "None":
+hallmark_fdr = meta_row.get("hallmark_fdr", None)
+if pd.notna(hallmark_fdr):
+    hallmark_caption.append(f"FDR < {hallmark_fdr}")
+else:
     hallmark_caption.append("No FDR filter")
 hallmark_caption = ", ".join(hallmark_caption)
 
 with m1:
     show_metric_with_caption(
         "Significant proteins",
-        summary.get("n_sig_proteins_total", "NA"),
+        meta_row.get("n_sig_proteins_total", "NA"),
         protein_caption
     )
 
 with m2:
     show_metric_with_caption(
         "Significant GO BP pathways",
-        summary.get("n_sig_go_bp_total", "NA"),
+        meta_row.get("n_sig_go_bp_total", "NA"),
         go_caption
     )
 
 with m3:
     show_metric_with_caption(
         "Significant Hallmark pathways",
-        summary.get("n_sig_hallmark_total", "NA"),
+        meta_row.get("n_sig_hallmark_total", "NA"),
         hallmark_caption
     )
 
@@ -365,7 +373,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # =========================
 with tab1:
     if ttest_df.empty:
-        st.info("No ttest.csv found.")
+        st.info("No ttest rows found for this drug.")
     else:
         v1, v2, v3, v4 = st.columns([1, 1, 1, 1.2])
 
@@ -406,7 +414,7 @@ with tab1:
 
         fig, volcano_df = plot_volcano_interactive(
             df=ttest_df,
-            drug_name=selected_drug,
+            drug_name=drug_name,
             fc_thresh=fc_thresh,
             fdr_thresh=fdr_thresh,
             top_n_labels=top_n_labels,
@@ -453,10 +461,11 @@ with tab1:
 # Tab 2: Summary
 # =========================
 with tab2:
-    if ai_summary_md.strip():
-        st.markdown(ai_summary_md)
+    ai_summary_md = meta_row.get("ai_summary_md", "")
+    if pd.notna(ai_summary_md) and str(ai_summary_md).strip():
+        st.markdown(str(ai_summary_md))
     else:
-        st.info("No ai_summary.md found.")
+        st.info("No ai_summary_md found.")
 
 # =========================
 # Tab 3: Identified proteins
@@ -465,7 +474,7 @@ with tab3:
     st.subheader("Identified proteins")
 
     if diff_df.empty:
-        st.info("No diff_proteins.csv found.")
+        st.info("No ttest rows found for this drug.")
     else:
         if "direction" in diff_df.columns:
             dir_option = st.radio(
@@ -498,8 +507,9 @@ with tab4:
     st.subheader("Hallmark pathway profile")
 
     if hallmark_df.empty:
-        st.info("No hallmark.csv found.")
+        st.info("No hallmark rows found for this drug.")
     else:
+        st.write(f"Rows shown: {len(hallmark_df)}")
         st.dataframe(hallmark_df, use_container_width=True)
 
         csv_data = hallmark_df.to_csv(index=False).encode("utf-8")
@@ -517,7 +527,7 @@ with tab5:
     st.subheader("GO Biological Process pathways")
 
     if go_df.empty:
-        st.info("No go_bp.csv found.")
+        st.info("No GO BP rows found for this drug.")
     else:
         if "direction" in go_df.columns:
             go_dir = st.radio(
@@ -548,4 +558,4 @@ with tab5:
 # Footer
 # =========================
 st.divider()
-st.caption(f"Current folder: {drug_dir}")
+st.caption(f"Current data files: {META_FILE.name}, {TTEST_FILE.name}, {HALLMARK_FILE.name}, {GO_FILE.name}")

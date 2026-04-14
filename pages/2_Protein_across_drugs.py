@@ -17,7 +17,7 @@ st.set_page_config(
 # Paths
 # =========================
 # Put this file under: pages/1_Protein_across_drugs.py
-# Default expected data file: data/df_ttest_all.csv
+# Default expected data file: data/df_ttest_all.parquet
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_FILE = BASE_DIR / "data" / "df_ttest_all.parquet"
 
