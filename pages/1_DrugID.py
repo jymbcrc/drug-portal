@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -23,6 +24,11 @@ HALLMARK_FILE = DATA_DIR / "df_hallmark_all.parquet"
 GO_FILE = DATA_DIR / "df_go_bp_all.parquet"
 TTEST_PREFIX = "df_ttest_all"
 
+# AI summary file generated from your .md files.
+# Recommended location for Streamlit deployment:
+#   drug_portal/data/drug_ai_summaries.json
+AI_SUMMARY_FILE = DATA_DIR / "drug_ai_summaries.json"
+
 
 # =========================
 # Helpers
@@ -36,6 +42,96 @@ def load_parquet(file_path_str: str):
         return pd.read_parquet(file_path)
     except Exception:
         return pd.DataFrame()
+
+
+
+@st.cache_data
+def load_ai_summaries(summary_path_str: str):
+    """
+    Load AI summaries from a JSON file.
+
+    Expected JSON format:
+    {
+        "6-Mercaptopurine": "# Drug summary: 6-Mercaptopurine\n...",
+        "Loratadine": "# Drug summary: Loratadine\n..."
+    }
+
+    The keys should be drug names. The values should be markdown strings.
+    """
+    summary_path = Path(summary_path_str)
+
+    if not summary_path.exists():
+        return {}
+
+    try:
+        with open(summary_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+
+    if not isinstance(data, dict):
+        return {}
+
+    return {str(k): str(v) for k, v in data.items()}
+
+
+def normalize_drug_key(name: str) -> str:
+    """
+    Normalize drug names for robust matching between:
+    - selected drug name from drug_meta.parquet
+    - markdown filename stem
+    - JSON keys
+
+    This helps when names differ slightly by spaces, underscores, hyphens, or suffixes.
+    """
+    if name is None:
+        return ""
+
+    s = str(name).strip()
+    s = s.replace(".summary", "")
+    s = s.replace("_", " ")
+    s = s.replace("-", " ")
+    s = " ".join(s.split())
+    return s.lower()
+
+
+def get_ai_summary_for_drug(ai_summaries: dict, drug_name: str):
+    """
+    Return the AI summary markdown for the selected drug.
+    Uses exact matching first, then normalized matching.
+    """
+    if not ai_summaries:
+        return ""
+
+    if drug_name in ai_summaries:
+        return ai_summaries[drug_name]
+
+    selected_key = normalize_drug_key(drug_name)
+
+    for k, v in ai_summaries.items():
+        if normalize_drug_key(k) == selected_key:
+            return v
+
+    return ""
+
+
+def strip_duplicate_summary_title(md_text: str, drug_name: str):
+    """
+    Avoid showing two repeated H1 titles inside the AI summary tab.
+    """
+    if not md_text:
+        return ""
+
+    lines = str(md_text).strip().splitlines()
+    if not lines:
+        return ""
+
+    first = lines[0].strip()
+    if first.startswith("# Drug summary:") or first == f"# {drug_name}":
+        return "\n".join(lines[1:]).strip()
+
+    return str(md_text).strip()
+
 
 
 @st.cache_data
@@ -281,6 +377,8 @@ meta_df, ttest_all, hallmark_all, go_all = load_all_data(
     str(GO_FILE)
 )
 
+ai_summaries = load_ai_summaries(str(AI_SUMMARY_FILE))
+
 if meta_df.empty:
     st.error(f"Cannot load meta file: {META_FILE}")
     st.stop()
@@ -394,9 +492,10 @@ with m3:
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Volcano plot",
     "ID card",
+    "AI summary",
     "All protein statistics",
     "Hallmark",
     "GO BP"
@@ -492,7 +591,7 @@ with tab1:
             )
 
 # =========================
-# Tab 2: Summary
+# Tab 2: ID card
 # =========================
 with tab2:
     ai_summary_md = meta_row.get("ai_summary_md", "")
@@ -501,10 +600,42 @@ with tab2:
     else:
         st.info("No ai_summary_md found.")
 
+
 # =========================
-# Tab 3: Identified proteins
+# Tab 3: AI summary
 # =========================
 with tab3:
+    st.subheader("AI summary")
+
+    # Priority:
+    # 1) all_drug_summaries.json loaded from DATA_DIR
+    # 2) ai_summary_md column in drug_meta.parquet, if present
+    ai_summary_md = get_ai_summary_for_drug(ai_summaries, drug_name)
+
+    if not ai_summary_md:
+        ai_summary_md = meta_row.get("ai_summary_md", "")
+
+    if pd.notna(ai_summary_md) and str(ai_summary_md).strip():
+        st.markdown(strip_duplicate_summary_title(str(ai_summary_md), drug_name))
+
+        st.download_button(
+            "Download this AI summary as Markdown",
+            data=str(ai_summary_md).encode("utf-8"),
+            file_name=f"{selected_drug}_AI_summary.md",
+            mime="text/markdown"
+        )
+    else:
+        st.info(
+            "No AI summary found for this drug. "
+            "Please place drug_ai_summaries.json under the portal data folder."
+        )
+        st.caption(f"Expected file path: {AI_SUMMARY_FILE}")
+
+
+# =========================
+# Tab 4: Identified proteins
+# =========================
+with tab4:
     st.subheader("Identified proteins")
 
     if diff_df.empty:
@@ -535,9 +666,9 @@ with tab3:
         )
 
 # =========================
-# Tab 4: Hallmark
+# Tab 5: Hallmark
 # =========================
-with tab4:
+with tab5:
     st.subheader("Hallmark pathway profile")
 
     if hallmark_df.empty:
@@ -555,9 +686,9 @@ with tab4:
         )
 
 # =========================
-# Tab 5: GO BP
+# Tab 6: GO BP
 # =========================
-with tab5:
+with tab6:
     st.subheader("GO Biological Process pathways")
 
     if go_df.empty:
