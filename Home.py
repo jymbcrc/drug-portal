@@ -49,7 +49,7 @@ st.markdown(
 This portal supports multiple complementary exploration modes:
 
 1. Drug-centric exploration  
-   Start from an individual compound to examine its proteomic signature, including differential proteins, volcano plots, and pathway perturbations.
+   Start from an individual compound to examine its proteomic signature, including per-drug AI summaries, differential proteins, volcano plots, and pathway perturbations.
 
 2. Protein-centric exploration  
    Query a specific gene or protein to evaluate how it responds across the entire drug panel.
