@@ -493,18 +493,50 @@ with m3:
 # Tabs
 # =========================
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "AI summary",
     "Volcano plot",
     "ID card",
-    "AI summary",
     "All protein statistics",
     "Hallmark",
     "GO BP"
 ])
 
+
 # =========================
-# Tab 1: Volcano plot
+# Tab 1: AI summary
 # =========================
 with tab1:
+    st.subheader("AI summary")
+
+    # Priority:
+    # 1) all_drug_summaries.json loaded from DATA_DIR
+    # 2) ai_summary_md column in drug_meta.parquet, if present
+    ai_summary_md = get_ai_summary_for_drug(ai_summaries, drug_name)
+
+    if not ai_summary_md:
+        ai_summary_md = meta_row.get("ai_summary_md", "")
+
+    if pd.notna(ai_summary_md) and str(ai_summary_md).strip():
+        st.markdown(strip_duplicate_summary_title(str(ai_summary_md), drug_name))
+
+        st.download_button(
+            "Download this AI summary as Markdown",
+            data=str(ai_summary_md).encode("utf-8"),
+            file_name=f"{selected_drug}_AI_summary.md",
+            mime="text/markdown"
+        )
+    else:
+        st.info(
+            "No AI summary found for this drug. "
+            "Please place drug_ai_summaries.json under the portal data folder."
+        )
+        st.caption(f"Expected file path: {AI_SUMMARY_FILE}")
+
+
+# =========================
+# Tab 2: Volcano plot
+# =========================
+with tab2:
     if ttest_df.empty:
         st.info("No ttest rows found for this drug.")
     else:
@@ -591,45 +623,14 @@ with tab1:
             )
 
 # =========================
-# Tab 2: ID card
+# Tab 3: ID card
 # =========================
-with tab2:
+with tab3:
     ai_summary_md = meta_row.get("ai_summary_md", "")
     if pd.notna(ai_summary_md) and str(ai_summary_md).strip():
         st.markdown(str(ai_summary_md))
     else:
         st.info("No ai_summary_md found.")
-
-
-# =========================
-# Tab 3: AI summary
-# =========================
-with tab3:
-    st.subheader("AI summary")
-
-    # Priority:
-    # 1) all_drug_summaries.json loaded from DATA_DIR
-    # 2) ai_summary_md column in drug_meta.parquet, if present
-    ai_summary_md = get_ai_summary_for_drug(ai_summaries, drug_name)
-
-    if not ai_summary_md:
-        ai_summary_md = meta_row.get("ai_summary_md", "")
-
-    if pd.notna(ai_summary_md) and str(ai_summary_md).strip():
-        st.markdown(strip_duplicate_summary_title(str(ai_summary_md), drug_name))
-
-        st.download_button(
-            "Download this AI summary as Markdown",
-            data=str(ai_summary_md).encode("utf-8"),
-            file_name=f"{selected_drug}_AI_summary.md",
-            mime="text/markdown"
-        )
-    else:
-        st.info(
-            "No AI summary found for this drug. "
-            "Please place drug_ai_summaries.json under the portal data folder."
-        )
-        st.caption(f"Expected file path: {AI_SUMMARY_FILE}")
 
 
 # =========================
