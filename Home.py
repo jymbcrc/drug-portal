@@ -11,7 +11,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # =====================
 # Title
 # =====================
-st.title("High throughput drug perturbational proteomics with automated interpretation at scale")
+st.title("Robotic perturbation proteomics and AI agents enable scalable drug mechanism discovery")
 
 st.markdown("---")
 
