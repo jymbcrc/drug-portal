@@ -100,7 +100,7 @@ st.markdown("---")
 # =====================
 st.header("Paper Link")
 st.markdown(
-"[Paper link](https://pmc.ncbi.nlm.nih.gov/articles/PMC10326973/)"
+"[Paper link](https://www.biorxiv.org/content/10.64898/2026.05.04.722718v1)"
 )
 
 st.info(
