@@ -21,7 +21,7 @@ st.markdown("---")
 st.header("Study overview")
 st.markdown(
     '''
-This interactive portal accompanies our study describing an end-to-end platform that integrates automated proteomic screening with AI-assisted data interpretation to enable scalable mechanism-of-action discovery.
+This interactive portal accompanies our study describing an end-to-end platform that integrates automated proteomic screening with AI-led data interpretation to enable scalable mechanism-of-action discovery.
 
 The underlying dataset comprises a large-scale proteomic screen of 172 compounds in HepG2 cells, generating over 1,200 proteomes and quantifying more than 8,700 proteins. For each compound, protein-level differential analysis and pathway-level interpretation (Hallmark and Gene Ontology) were systematically performed, followed by AI-assisted summarization and hypothesis generation.
 
@@ -88,7 +88,7 @@ Analysis pipeline:
 - Differential protein analysis (t-test with FDR correction)  
 - Log2 fold-change–based ranking  
 - Gene set enrichment analysis (Hallmark + GO BP)  
-- AI-assisted interpretation and hypothesis generation  
+- AI-led interpretation and hypothesis generation  
 '''
 )
 
